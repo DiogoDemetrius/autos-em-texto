@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Autos em texto</title>
+  <meta name="description" content="Converta PDFs e fotos de documentos em texto, direto no navegador, sem enviar os arquivos para nenhum servidor.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Cpath d='M3 8a2 2 0 0 1 2-2h7l3 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z' fill='%235A3A9C'/%3E%3Cpath d='M9 15h14M9 19h10' stroke='%23fff' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600&family=Source+Serif+4:opsz,wght@8..60,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main class="wrap">
+    <header class="intro">
+      <h1>Autos em texto</h1>
+      <p class="lede">Converta PDFs e fotos de documentos em texto antes de enviar para a IA. Texto puro ocupa uma fração do limite que páginas escaneadas consomem, e o arquivo pode ser reaproveitado em quantas conversas precisar.</p>
+    </header>
+
+    <section class="folder" id="drop" aria-label="Área para soltar arquivos">
+      <div class="folder-body">
+        <p class="drop-title">Solte aqui os PDFs e as imagens</p>
+        <p class="drop-hint">PDF, JPG, PNG ou WEBP. Pode mandar vários de uma vez, ou colar uma imagem com Ctrl+V.</p>
+        <button class="btn primary" type="button">Escolher arquivos</button>
+        <input type="file" id="file" multiple accept="application/pdf,.pdf,image/jpeg,image/png,image/webp" hidden>
+      </div>
+    </section>
+
+    <section class="options" aria-label="Opções de conversão">
+      <label>Idioma do documento
+        <select id="lang">
+          <option value="por">Português</option>
+          <option value="por+eng">Português e inglês</option>
+        </select>
+      </label>
+      <label>Páginas do PDF
+        <input id="pages" type="text" placeholder="Todas (ex.: 1-5, 9)" autocomplete="off">
+      </label>
+      <label class="check"><input type="checkbox" id="forceOcr"> Ler todas as páginas por OCR</label>
+    </section>
+
+    <p class="alert" id="alert" role="status" hidden></p>
+
+    <section class="queue" id="queueSection" hidden>
+      <div class="queue-head">
+        <h2>Arquivos</h2>
+        <div class="queue-actions">
+          <button class="btn" id="stop" type="button" hidden>Parar</button>
+          <button class="btn" id="joinAll" type="button" disabled>Baixar tudo em um .txt</button>
+          <button class="btn" id="zipAll" type="button" disabled>Baixar tudo em .zip</button>
+          <button class="btn ghost" id="clear" type="button">Limpar lista</button>
+        </div>
+      </div>
+      <p class="totals" id="totals"></p>
+      <ol class="list" id="list"></ol>
+    </section>
+
+    <footer class="note">
+      <p><strong>Os documentos não saem deste computador.</strong> A leitura e o OCR acontecem dentro do navegador. Na primeira vez, o site baixa as bibliotecas e o modelo de português, que ficam guardados em cache.</p>
+      <p>O OCR pode errar em páginas manchadas, manuscritas ou com carimbos. Confira nomes, números e datas nas páginas marcadas com baixa confiança antes de usar o texto.</p>
+    </footer>
+  </main>
+
+  <template id="itemTpl">
+    <li class="item">
+      <div class="item-top">
+        <div class="item-name"><span class="name"></span><span class="meta"></span></div>
+        <span class="badge">Na fila</span>
+      </div>
+      <div class="bar" aria-hidden="true"><span></span></div>
+      <p class="detail">Aguardando a vez</p>
+      <p class="warnline" hidden></p>
+      <div class="item-actions" hidden>
+        <button class="btn small" type="button" data-act="download">Baixar .txt</button>
+        <button class="btn small" type="button" data-act="copy">Copiar texto</button>
+        <button class="btn small ghost" type="button" data-act="toggle" aria-expanded="false">Ver e editar</button>
+      </div>
+      <textarea class="preview" hidden spellcheck="false" aria-label="Texto convertido"></textarea>
+    </li>
+  </template>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
