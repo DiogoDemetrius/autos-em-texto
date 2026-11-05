@@ -9,6 +9,9 @@ Converte PDFs e imagens de documentos (JPG, PNG, WEBP) em arquivos `.txt`, diret
 - Páginas com OCR de baixa confiança (abaixo de 60%) são marcadas no arquivo e na tela para conferência.
 - Linhas ilegíveis (carimbos, assinaturas, manchas, bordas) são trocadas por `[trecho ilegível]`, e sujeira solta (furos de arquivo, `|`) é descartada.
 - Palavras com leitura duvidosa saem marcadas como `[palavra?]`. Também é marcado o ordinal masculino antes de palavra feminina (ex.: `[3º?] Vara`), erro comum em que o OCR troca `ª` por `º` com alta confiança. A marcação pode ser desligada na tela.
+- Números com letra parecida com dígito (`o1`, `l2`) ou separador estranho (`1.387;58`) são marcados, e a marcação se estende aos pedaços de um número partido (`[1.856?] [06?]`).
+- Linhas com dados (vários números ou palavras lidas com segurança) nunca são descartadas, mesmo com baixa confiança: numa tabela de valores, perder a linha é pior que deixá-la marcada.
+- Antes do OCR, a imagem passa por realce de contraste (recupera tinta apagada) e a tinta colorida é removida (carimbos vermelhos, assinaturas azuis, manchas amareladas).
 - Saída: um `.txt` por arquivo, tudo num `.txt` só, ou um `.zip`.
 - Mostra uma estimativa de tokens antes (como imagem) e depois (como texto).
 

@@ -150,9 +150,63 @@
 
   const hasAlnum = (s) => /[\p{L}\p{N}]/u.test(s);
 
+  // Número com letra parecida com dígito (o1, 1O5, l2) ou separador estranho (1.387;58, 1:513:02)
+  function suspiciousNumber(t) {
+    const core = t.replace(/^[(\[]+|[)\].,;:]+$/g, '');
+    if (!/\d/.test(core)) return false;
+    if (/^\d+[ºª°]$/.test(core) || /^n[º°]/i.test(core)) return false;
+    const lookalike = /^[\doOlIiSsBZ.,/:\-]+$/.test(core) && /[oOlIiSsBZ]/.test(core);
+    const badSep = /\d;\d/.test(core) || /\d:\d{3}/.test(core) || /\d[.,]\d{1,2}:\d/.test(core);
+    return lookalike || badSep;
+  }
+
+  // Realce de contraste: estica os tons da página para que tinta apagada vire preto e papel vire branco
+  function enhanceCanvas(canvas) {
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+    const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = img.data;
+    const hist = new Uint32Array(256);
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i];
+      const gr = d[i + 1];
+      const b = d[i + 2];
+      // Tinta colorida (carimbo vermelho, assinatura azul, marca-texto, mancha amarelada) vira papel;
+      // o texto impresso é preto/cinza e tem pouca saturação.
+      if (Math.max(r, gr, b) - Math.min(r, gr, b) > 60) {
+        d[i] = 255;
+        hist[255]++;
+        continue;
+      }
+      const g = (r * 299 + gr * 587 + b * 114) / 1000 | 0;
+      d[i] = g;
+      hist[g]++;
+    }
+    const total = d.length / 4;
+    let lo = 0;
+    let hi = 255;
+    for (let acc = 0; lo < 255 && (acc += hist[lo]) < total * 0.01; lo++);
+    for (let acc = 0; hi > 0 && (acc += hist[hi]) < total * 0.10; hi--); // papel é a maioria: corta 10% mais claros
+    const range = Math.max(30, hi - lo);
+    for (let i = 0; i < d.length; i += 4) {
+      const v = Math.max(0, Math.min(255, ((d[i] - lo) * 255) / range));
+      d[i] = d[i + 1] = d[i + 2] = v;
+    }
+    ctx.putImageData(img, 0, 0);
+  }
+
+  // Linha com dados (vários números, ou várias palavras lidas com segurança) nunca é descartada:
+  // num cálculo ou tabela, sumir com uma linha é pior que deixá-la com marcações [?].
+  function hasRealContent(line) {
+    const words = line.words || [];
+    const numeric = words.filter((w) => ((w.text || '').match(/\d/g) || []).length >= 2).length;
+    const solid = words.filter((w) => w.confidence >= 85 && /\p{L}{3,}/u.test(w.text || '')).length;
+    return numeric >= 2 || solid >= 2;
+  }
+
   function isJunkLine(line, afterJunk) {
     const raw = (line.text || '').trim();
     if (!raw) return true;
+    if (hasRealContent(line)) return false;
     if (line.confidence < CONFIG.junkLineConf) return true;
     const chars = raw.replace(/\s/g, '');
     const alnum = (chars.match(/[\p{L}\p{N}]/gu) || []).length;
@@ -192,17 +246,26 @@
 
           const all = line.words || [];
           const words = all.filter((w, i) => !isStrayWord(w, i, all.length));
-          const out = words.map((w, i) => {
-            const t = w.text.trim();
-            if (!markDoubts || !hasAlnum(t)) return t;
-            const next = words[i + 1] ? words[i + 1].text.trim() : '';
-            const lowConf = w.confidence < CONFIG.doubtWordConf;
-            const ordinal = /\dº$/.test(t) && FEMININE_AFTER_ORDINAL.test(next);
-            if (lowConf || ordinal) {
-              doubts++;
-              return `[${t}?]`;
+          const texts = words.map((w) => w.text.trim());
+          const doubt = texts.map((t, i) => {
+            if (!markDoubts || !hasAlnum(t)) return false;
+            const lowConf = words[i].confidence < CONFIG.doubtWordConf;
+            const ordinal = /\dº$/.test(t) && FEMININE_AFTER_ORDINAL.test(texts[i + 1] || '');
+            return lowConf || ordinal || suspiciousNumber(t);
+          });
+          // Número partido em pedaços ("1.856 [06?]"): a dúvida contamina os pedaços numéricos vizinhos
+          const isNum = (t) => /^[\d.,]*\d[\d.,]*$/.test(t);
+          for (let pass = 0; pass < 2; pass++) {
+            for (let i = 0; i < texts.length; i++) {
+              if (doubt[i] || !isNum(texts[i])) continue;
+              const touches = (j) => doubt[j] && /\d/.test(texts[j]) && (/[.,]$/.test(texts[Math.min(i, j)]) || /^[.,]|^\d{1,2}$/.test(texts[Math.max(i, j)]));
+              if (touches(i - 1) || touches(i + 1)) doubt[i] = true;
             }
-            return t;
+          }
+          const out = texts.map((t, i) => {
+            if (!doubt[i]) return t;
+            doubts++;
+            return `[${t}?]`;
           });
           if (out.length) lines.push(out.join(' '));
         }
@@ -236,6 +299,7 @@
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     await page.render({ canvasContext: ctx, viewport }).promise;
+    enhanceCanvas(canvas);
     return canvas;
   }
 
@@ -316,6 +380,7 @@
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(bmp, 0, 0, canvas.width, canvas.height);
+    enhanceCanvas(canvas);
     if (bmp.close) bmp.close();
 
     const r = await ocr(canvas, ocrLogger(item, 0, 1, 'Imagem'));
