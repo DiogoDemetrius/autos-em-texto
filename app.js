@@ -9,7 +9,16 @@
     maxImageSide: 3500,        // fotos maiores são reduzidas antes do OCR
     ocrTargetWidth: 2200,      // largura em pixels ao renderizar página de PDF para OCR
     lowConfidence: 60,         // abaixo disso, a página é marcada para conferência
+    junkLineConf: 50,          // linha abaixo disso vira [trecho ilegível] (carimbo, mancha, assinatura)
+    doubtWordConf: 70,         // palavra abaixo disso é marcada como [palavra?]
+    strayWordConf: 50,         // palavra solta de 1–2 letras abaixo disso é descartada (furo, sujeira)
   };
+
+  // Palavras curtas legítimas que não devem ser descartadas como sujeira
+  const SHORT_WORDS = new Set(['a', 'à', 'á', 'e', 'é', 'o', 'ó', 'ou', 'um', 'em', 'de', 'do', 'da', 'no', 'na', 'os', 'as', 'ao', 'se', 'me', 'te', 'nº', 'n°', 'r$', 'fl', 'fls', 'cpf', 'rg', 'df', 'sp', 'rj']);
+
+  // Ordinal masculino antes de palavra feminina: erro comum do OCR (3ª lido como 3º)
+  const FEMININE_AFTER_ORDINAL = /^(vara|varas|turma|turmas|câmara|câmaras|seção|secção|região|zona|instância|promotoria|delegacia|circunscrição|subseção|junta|via|vias|edição|alteração|cláusula)\b/i;
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const els = {
@@ -18,6 +27,7 @@
     lang: $('#lang'),
     pages: $('#pages'),
     force: $('#forceOcr'),
+    markDoubts: $('#markDoubts'),
     alert: $('#alert'),
     queue: $('#queueSection'),
     list: $('#list'),
@@ -126,11 +136,80 @@
     onOcrLog = onLog;
     try {
       const w = await getWorker(els.lang.value);
-      const { data } = await w.recognize(source);
-      return { text: cleanText(data.text || ''), conf: Math.round(data.confidence || 0) };
+      const { data } = await w.recognize(source, {}, { text: true, blocks: true });
+      const conf = Math.round(data.confidence || 0);
+      if (!data.blocks || !data.blocks.length) {
+        return { text: cleanText(data.text || ''), conf, dropped: 0, doubts: 0 };
+      }
+      const built = buildFromBlocks(data.blocks, els.markDoubts.checked);
+      return { text: cleanText(built.text), conf, dropped: built.dropped, doubts: built.doubts };
     } finally {
       onOcrLog = null;
     }
+  }
+
+  const hasAlnum = (s) => /[\p{L}\p{N}]/u.test(s);
+
+  function isJunkLine(line, afterJunk) {
+    const raw = (line.text || '').trim();
+    if (!raw) return true;
+    if (line.confidence < CONFIG.junkLineConf) return true;
+    const chars = raw.replace(/\s/g, '');
+    const alnum = (chars.match(/[\p{L}\p{N}]/gu) || []).length;
+    if (alnum / chars.length < 0.5) return true;
+    // Fragmento curtíssimo pouco confiável, ou colado num trecho ilegível: resto de carimbo ou rubrica ("Vo")
+    return alnum <= 3 && !/^\d+[.)]?$/.test(chars) && (afterJunk || line.confidence < 85);
+  }
+
+  function isStrayWord(w, i, total) {
+    const t = w.text.trim();
+    if (!t) return true;
+    if (!hasAlnum(t)) {
+      const edge = i === 0 || i === total - 1;
+      return w.confidence < 60 || (edge && /^[|¦~_`'"!]+$/.test(t)); // "|", "~", restos de borda
+    }
+    const bare = t.toLowerCase().replace(/[^\p{L}\p{N}$°º]/gu, '');
+    return bare.length <= 2 && w.confidence < CONFIG.strayWordConf && !SHORT_WORDS.has(bare) && !/^\d+$/.test(bare);
+  }
+
+  function buildFromBlocks(blocks, markDoubts) {
+    const paragraphs = [];
+    let dropped = 0;
+    let doubts = 0;
+    let lastWasJunk = false;
+
+    for (const block of blocks) {
+      for (const para of block.paragraphs || []) {
+        const lines = [];
+        for (const line of para.lines || []) {
+          if (isJunkLine(line, lastWasJunk)) {
+            if ((line.text || '').trim()) dropped++;
+            if (!lastWasJunk) lines.push('[trecho ilegível]');
+            lastWasJunk = true;
+            continue;
+          }
+          lastWasJunk = false;
+
+          const all = line.words || [];
+          const words = all.filter((w, i) => !isStrayWord(w, i, all.length));
+          const out = words.map((w, i) => {
+            const t = w.text.trim();
+            if (!markDoubts || !hasAlnum(t)) return t;
+            const next = words[i + 1] ? words[i + 1].text.trim() : '';
+            const lowConf = w.confidence < CONFIG.doubtWordConf;
+            const ordinal = /\dº$/.test(t) && FEMININE_AFTER_ORDINAL.test(next);
+            if (lowConf || ordinal) {
+              doubts++;
+              return `[${t}?]`;
+            }
+            return t;
+          });
+          if (out.length) lines.push(out.join(' '));
+        }
+        if (lines.length) paragraphs.push(lines.join('\n'));
+      }
+    }
+    return { text: paragraphs.join('\n\n'), dropped, doubts };
   }
 
   function ocrLogger(item, base, step, label) {
@@ -172,6 +251,8 @@
       const parts = [];
       const low = [];
       let ocrCount = 0;
+      let dropped = 0;
+      let doubts = 0;
       const step = 1 / wanted.length;
 
       for (let idx = 0; idx < wanted.length; idx++) {
@@ -195,6 +276,8 @@
           mode = 'OCR';
           conf = r.conf;
           ocrCount++;
+          dropped += r.dropped;
+          doubts += r.doubts;
           if (conf < CONFIG.lowConfidence) low.push(n);
         }
 
@@ -202,7 +285,7 @@
         parts.push({ n, mode, conf, text });
       }
 
-      return { parts, totalPages: total, ocrCount, low, before: wanted.length * CONFIG.imageTokensPerPage };
+      return { parts, totalPages: total, ocrCount, low, dropped, doubts, before: wanted.length * CONFIG.imageTokensPerPage };
     } finally {
       pdf.destroy();
     }
@@ -243,6 +326,8 @@
       totalPages: 1,
       ocrCount: 1,
       low: r.conf < CONFIG.lowConfidence ? [1] : [],
+      dropped: r.dropped,
+      doubts: r.doubts,
       before,
     };
   }
@@ -258,6 +343,12 @@
       lines.push(pdf
         ? `Conferir (OCR com baixa confiança): ${plural(res.low.length, 'página', 'páginas')} ${res.low.join(', ')}`
         : 'Conferir: OCR com baixa confiança');
+    }
+    if (res.doubts || res.dropped) {
+      const legend = [];
+      if (res.doubts) legend.push('[palavra?] = leitura duvidosa, conferir no original');
+      if (res.dropped) legend.push('[trecho ilegível] = carimbo, assinatura ou mancha descartados');
+      lines.push(`Legenda: ${legend.join('; ')}`);
     }
     lines.push('');
     for (const p of res.parts) {
@@ -357,14 +448,20 @@
     setProgress(item, 1, `${summary}. Estimativa: ≈ ${fmt(item.before)} tokens como imagem, ≈ ${fmt(item.after)} como texto.`);
 
     const warn = $('.warnline', item.el);
+    const notes = [];
     if (res.low.length) {
-      warn.textContent = item.kind === 'pdf'
+      notes.push(item.kind === 'pdf'
         ? `Confira ${plural(res.low.length, 'a página', 'as páginas')} ${res.low.join(', ')}: o OCR teve baixa confiança.`
-        : 'Confira o texto: o OCR teve baixa confiança nesta imagem.';
-      warn.hidden = false;
-    } else {
-      warn.hidden = true;
+        : 'Confira o texto: o OCR teve baixa confiança nesta imagem.');
     }
+    if (res.doubts) {
+      notes.push(`${res.doubts} ${plural(res.doubts, 'palavra duvidosa marcada', 'palavras duvidosas marcadas')} com [?].`);
+    }
+    if (res.dropped) {
+      notes.push(`${res.dropped} ${plural(res.dropped, 'linha ilegível descartada', 'linhas ilegíveis descartadas')} (carimbo, assinatura ou mancha).`);
+    }
+    warn.textContent = notes.join(' ');
+    warn.hidden = !notes.length;
   }
 
   function updateTotals() {

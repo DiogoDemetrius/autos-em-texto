@@ -7,6 +7,8 @@ Converte PDFs e imagens de documentos (JPG, PNG, WEBP) em arquivos `.txt`, diret
 - **PDF com texto embutido:** o texto é extraído direto, página por página (pdf.js).
 - **PDF escaneado ou imagem:** a página é renderizada e lida por OCR em português (Tesseract.js).
 - Páginas com OCR de baixa confiança (abaixo de 60%) são marcadas no arquivo e na tela para conferência.
+- Linhas ilegíveis (carimbos, assinaturas, manchas, bordas) são trocadas por `[trecho ilegível]`, e sujeira solta (furos de arquivo, `|`) é descartada.
+- Palavras com leitura duvidosa saem marcadas como `[palavra?]`. Também é marcado o ordinal masculino antes de palavra feminina (ex.: `[3º?] Vara`), erro comum em que o OCR troca `ª` por `º` com alta confiança. A marcação pode ser desligada na tela.
 - Saída: um `.txt` por arquivo, tudo num `.txt` só, ou um `.zip`.
 - Mostra uma estimativa de tokens antes (como imagem) e depois (como texto).
 
